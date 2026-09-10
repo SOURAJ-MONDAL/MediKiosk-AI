@@ -26,7 +26,7 @@ st.session_state.setdefault("ai_summary", None)
 st.session_state.setdefault("ai_emergency", False)
 st.session_state.setdefault("chat_ready", False)
 
-_need_q = 2 if not ai.is_available else 4
+_need_q = 3 if not ai.is_available else 5
 st.markdown(f"""
 <div class="mk-section" style="margin-top: 0.5rem;">
     <div class="mk-eyebrow">MediKiosk AI</div>
@@ -74,7 +74,7 @@ if st.session_state.chat_history:
                 st.markdown(msg["content"])
 
 if not st.session_state.chat_history:
-    _need_empty = 2 if not ai.is_available else 4
+    _need_empty = 3 if not ai.is_available else 5
     st.markdown(f"""
     <div class="mk-empty">
         <div class="mk-empty-icon">💬</div>
@@ -103,7 +103,7 @@ if not st.session_state.chat_history:
             ai_response = result.get("response", "")
             st.session_state.chat_history.append({"role": "assistant", "content": ai_response})
             user_count = sum(1 for m in st.session_state.chat_history if m.get("role") == "user")
-            _need = 2 if not ai.is_available else 4
+            _need = 3 if not ai.is_available else 5
             is_emergency = bool(result.get("is_emergency") or emergency_now)
             is_complete = bool(result.get("conversation_complete")) and (user_count >= _need or is_emergency)
             if result.get("follow_up_questions"):
@@ -157,7 +157,7 @@ if prompt := st.chat_input("Describe your symptoms... (short answer: 1-2 sentenc
 
     # Track follow-ups and gate summary until required questions have been asked (2 offline, 4 online)
     user_count = sum(1 for m in st.session_state.chat_history if m.get("role") == "user")
-    _need = 2 if not ai.is_available else 4
+    _need = 3 if not ai.is_available else 5
     is_emergency = bool(result.get("is_emergency") or emergency_now)
     is_complete = bool(result.get("conversation_complete")) and (user_count >= _need or is_emergency)
 
@@ -196,7 +196,7 @@ if prompt := st.chat_input("Describe your symptoms... (short answer: 1-2 sentenc
 if not st.session_state.get("conversation_complete") and st.session_state.get("ai_follow_ups"):
     qs = st.session_state.ai_follow_ups
     # threshold depends on online vs offline
-    _need = 4 if ai.is_available else 2
+    _need = 5 if ai.is_available else 3
     if st.session_state.get("ai_progress"):
         st.caption(st.session_state.ai_progress)
     st.markdown("**Follow-up questions — please type short answers (1-2 sentences) in the chat box below:**")

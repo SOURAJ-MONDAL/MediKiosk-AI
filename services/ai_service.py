@@ -18,8 +18,10 @@ IMPORTANT SAFETY RULES:
 STRICT CONVERSATION FLOW — MINIMUM QUESTIONS BEFORE SUMMARY:
 - ONLINE MODE (you have full capability): You MUST ask at least 4 distinct follow-up questions across 4 separate user turns before you may set conversation_complete to true.
   On user messages 1, 2, and 3 you MUST keep conversation_complete = false.
-  Only on user message 4 or later MAY you set conversation_complete = true — and only then may you provide a final structured_summary with suggested_specialties, suggested_medicines and recommended_next_step.
-- If you are on turn 1-3, your structured_summary may be partial, and suggested_specialties / suggested_medicines should be empty.
+  Only on user message 4 you MUST ask: "Are you experiencing any further symptoms? If yes, please describe, otherwise say no."
+  Only on user message 5 or later (after the further-symptoms check) MAY you set conversation_complete = true — and only then may you provide a final structured_summary with suggested_specialties, suggested_medicines and recommended_next_step.
+- OFFLINE MODE: ask 2 questions, then on the 3rd turn ask the same "any further symptoms?" check, and only on turn 3+ may you complete.
+- If you are before the further-symptoms check, your structured_summary may be partial, and suggested_specialties / suggested_medicines should be empty.
 - Emergency exception: if is_emergency = true (life-threatening symptoms), you may set conversation_complete = true immediately and provide emergency guidance.
 
 RESPONSE FORMAT:
@@ -254,7 +256,7 @@ class AIService:
             return self._mock_online_response(messages)
         if not self._available:
             data = self._fallback_response(messages)
-            # OFFLINE: normally 2 questions, but if a single long sentence already contains symptom+duration+severity, allow immediate categorization
+            # OFFLINE: 2 questions + 1 extra "any further symptoms?" = 3 before summary
             user_count = sum(1 for m in messages if m.get("role") == "user")
             summary = data.get("structured_summary", {}) if isinstance(data.get("structured_summary"), dict) else {}
             has_dur = (summary.get("duration") or "").strip().lower() not in ("", "unknown", "not assessed", "not specified")
@@ -263,17 +265,30 @@ class AIService:
             single_sentence_complete = has_dur and has_sev and has_sym
             if data.get("is_emergency"):
                 data["conversation_complete"] = True
-            elif single_sentence_complete:
-                data["conversation_complete"] = True
+            elif single_sentence_complete and user_count >= 1:
+                # single long sentence with all, still ask the extra further-symptoms check
+                if user_count < 3:
+                    data["conversation_complete"] = False
+                    # ensure next follow-up is the further-symptoms question
+                    if isinstance(data.get("structured_summary"), dict):
+                        data["structured_summary"]["suggested_specialties"] = []
+                    if not any("further symptom" in q.lower() for q in data.get("follow_up_questions", [])):
+                        data["follow_up_questions"] = ["Are you experiencing any further symptoms? If yes, please describe."] + data.get("follow_up_questions", [])[:1]
+                else:
+                    data["conversation_complete"] = True
                 if isinstance(data.get("structured_summary"), dict):
                     data["structured_summary"]["suggested_medicines"] = []
-            elif user_count < 2:
+            elif user_count < 3:
                 data["conversation_complete"] = False
+                if user_count == 2:
+                    # after 2, ask the extra further-symptoms question
+                    if not any("further symptom" in q.lower() for q in data.get("follow_up_questions", [])):
+                        data["follow_up_questions"] = ["Are you experiencing any further symptoms? If yes, please describe."] + data.get("follow_up_questions", [])[:1]
                 if isinstance(data.get("structured_summary"), dict):
                     data["structured_summary"]["suggested_specialties"] = []
                     data["structured_summary"]["suggested_medicines"] = []
             else:
-                # after 2 questions, allow completion offline — still no medicines
+                # after 3 (2+1), allow completion offline — still no medicines
                 data["conversation_complete"] = True
                 if isinstance(data.get("structured_summary"), dict):
                     data["structured_summary"]["suggested_medicines"] = []
@@ -320,21 +335,28 @@ class AIService:
                 if not data["structured_summary"].get("suggested_specialties"):
                     data["structured_summary"]["suggested_specialties"] = self.suggest_specialties(agg_text)
 
-            # Enforce minimum 4 questions before completion (unless emergency or single-sentence already complete)
+            # Enforce 4+1 questions before completion (unless emergency) — 5 total for online, single long sentence still needs the extra further-symptoms check
             if not data.get("is_emergency"):
-                if _single_complete:
-                    # single long sentence with all key info — allow immediate categorization
-                    data["conversation_complete"] = True
-                    if isinstance(data.get("structured_summary"), dict) and "suggested_medicines" not in data["structured_summary"]:
-                        data["structured_summary"]["suggested_medicines"] = []
-                elif user_count < 4:
+                if _single_complete and user_count < 5:
+                    # single sentence with all, still need the extra further-symptoms turn
                     data["conversation_complete"] = False
+                    if user_count >= 4:
+                        if not any("further symptom" in q.lower() for q in data.get("follow_up_questions", [])):
+                            data["follow_up_questions"] = ["Are you experiencing any further symptoms? If yes, please describe."] + (data.get("follow_up_questions", [])[:1])
+                    if isinstance(data.get("structured_summary"), dict):
+                        data["structured_summary"]["suggested_specialties"] = []
+                        data["structured_summary"]["suggested_medicines"] = []
+                elif user_count < 5:
+                    data["conversation_complete"] = False
+                    if user_count == 4:
+                        if not any("further symptom" in q.lower() for q in data.get("follow_up_questions", [])):
+                            data["follow_up_questions"] = ["Are you experiencing any further symptoms? If yes, please describe."] + (data.get("follow_up_questions", [])[:1])
                     # Clear specialties/medicines until complete to avoid premature recommendations
                     if isinstance(data.get("structured_summary"), dict):
                         data["structured_summary"]["suggested_specialties"] = []
                         data["structured_summary"]["suggested_medicines"] = []
                 else:
-                    # after 4, ensure medicines field exists (model may omit)
+                    # after 5 (4+1), ensure medicines field exists (model may omit)
                     if isinstance(data.get("structured_summary"), dict) and "suggested_medicines" not in data["structured_summary"]:
                         data["structured_summary"]["suggested_medicines"] = []
             else:
