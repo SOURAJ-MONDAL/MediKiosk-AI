@@ -44,7 +44,16 @@ def render_booking_wizard():
         return
 
     if st.session_state.get("booking_confirmed"):
-        render_confirmation()
+        # Show a brief success toast then return to default UI (only doctor profile card)
+        apt = st.session_state.booking_confirmed
+        st.success(f"Appointment confirmed! Booking ID: #APP-{apt['id']} with Dr. {apt['doctor_first_name']} {apt['doctor_last_name']} on {format_date(apt['appointment_date'])} at {format_time(apt['appointment_time'])}.", icon=":material/check_circle:")
+        # Clear booking wizard state so the page goes back to default doctor profile view
+        for k in list(BOOKING_KEYS):
+            if k in st.session_state:
+                del st.session_state[k]
+        if "booking_confirmed" in st.session_state:
+            del st.session_state["booking_confirmed"]
+        # keep selected_doctor_id so the profile card remains
         return
 
     step = st.session_state.get("booking_step")
