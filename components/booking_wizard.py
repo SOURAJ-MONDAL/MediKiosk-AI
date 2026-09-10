@@ -436,27 +436,36 @@ def render_step_confirm():
         st.session_state.booking_reason = reason
 
         st.markdown('<div style="height:0.75rem;"></div>', unsafe_allow_html=True)
-        st.markdown("**Attach document / prescription (optional)**")
-        st.caption("Upload a previous prescription, lab report or other file to share with the doctor at booking.")
+        st.markdown("**Attach documents / prescriptions (optional) — multiple files allowed**")
+        st.caption("Upload previous prescriptions, lab reports or other files to share with the doctor at booking. You can select multiple files at once.")
         doc_type_labels = {"lab_report": "Lab report", "prescription": "Prescription", "imaging": "Imaging / scan", "other": "Other"}
         c_doc1, c_doc2 = st.columns(2)
         with c_doc1:
-            booking_doc_title = st.text_input("Document title", key="booking_doc_title", placeholder="e.g. Previous prescription")
+            booking_doc_title = st.text_input("Document title prefix (optional)", key="booking_doc_title", placeholder="e.g. Previous prescription — will be numbered if multiple")
         with c_doc2:
-            booking_doc_type = st.selectbox("Document type", list(doc_type_labels.keys()), format_func=lambda x: doc_type_labels.get(x, x), key="booking_doc_type")
-        booking_uploaded = st.file_uploader("Choose file to attach", type=["pdf", "jpg", "jpeg", "png", "gif", "doc", "docx"], key="booking_doc_file")
-        booking_doc_notes = st.text_input("Document notes (optional)", key="booking_doc_notes", placeholder="e.g. For doctor reference")
-        # file bytes need manual session storage (not a widget key) — do not touch booking_doc_title/type/notes keys after widget creation
-        if booking_uploaded is not None:
-            st.session_state.booking_doc_bytes = booking_uploaded.getvalue()
-            st.session_state.booking_doc_filename = booking_uploaded.name
-            st.caption(f"Selected: {booking_uploaded.name} ({len(booking_uploaded.getvalue())/1024:.0f} KB)")
+            booking_doc_type = st.selectbox("Document type (applies to all files)", list(doc_type_labels.keys()), format_func=lambda x: doc_type_labels.get(x, x), key="booking_doc_type")
+        booking_uploaded_list = st.file_uploader("Choose files to attach", type=["pdf", "jpg", "jpeg", "png", "gif", "doc", "docx"], key="booking_doc_file", accept_multiple_files=True)
+        booking_doc_notes = st.text_input("Document notes (optional, applies to all)", key="booking_doc_notes", placeholder="e.g. For doctor reference")
+        # store files in session (list of dicts) — not a widget key, safe to set
+        if booking_uploaded_list:
+            _to_store = []
+            for f in booking_uploaded_list:
+                try:
+                    _to_store.append({"bytes": f.getvalue(), "name": f.name})
+                except Exception:
+                    continue
+            st.session_state.booking_doc_files = _to_store
+            # keep legacy single-file keys for backward compat (first file)
+            if _to_store:
+                st.session_state.booking_doc_bytes = _to_store[0]["bytes"]
+                st.session_state.booking_doc_filename = _to_store[0]["name"]
+            for entry in _to_store:
+                st.caption(f"Selected: {entry['name']} ({len(entry['bytes'])/1024:.0f} KB)")
         else:
-            # clear file bytes if no file
-            if "booking_doc_bytes" in st.session_state:
-                del st.session_state.booking_doc_bytes
-            if "booking_doc_filename" in st.session_state:
-                del st.session_state.booking_doc_filename
+            # clear if no files
+            for k in ["booking_doc_files", "booking_doc_bytes", "booking_doc_filename"]:
+                if k in st.session_state:
+                    del st.session_state[k]
 
     c1, c2 = st.columns(2)
     with c1:
@@ -519,34 +528,48 @@ def render_step_confirm():
                 ai_chat_history=_ai_chat_str,
             )
             if result["success"]:
-                # If a document/prescription was attached during booking, save it now
-                _doc_bytes = st.session_state.get("booking_doc_bytes")
-                _doc_name = st.session_state.get("booking_doc_filename")
-                _doc_title = st.session_state.get("booking_doc_title", "").strip()
+                # If documents/prescriptions were attached during booking, save all now (multiple allowed)
+                _doc_files = st.session_state.get("booking_doc_files")
+                # fallback to legacy single file if new key not present
+                if not _doc_files and st.session_state.get("booking_doc_bytes"):
+                    _doc_files = [{"bytes": st.session_state.get("booking_doc_bytes"), "name": st.session_state.get("booking_doc_filename")}]
+                _doc_title_prefix = st.session_state.get("booking_doc_title", "").strip()
                 _doc_type = st.session_state.get("booking_doc_type", "other")
                 _doc_notes = st.session_state.get("booking_doc_notes", "")
-                if _doc_bytes and _doc_name:
-                    if not _doc_title:
-                        _doc_title = _doc_name
+                if _doc_files:
                     try:
                         from services.document_service import DocumentService
-                        # include appointment reference in notes
-                        _notes_with_apt = f"{_doc_notes} [Attached to appointment #{result['appointment_id']} on {date_str}]".strip() if _doc_notes else f"Attached to appointment #{result['appointment_id']} on {date_str}"
-                        DocumentService.upload_document(
-                            patient_id=patient["id"],
-                            title=_doc_title,
-                            file_bytes=_doc_bytes,
-                            filename=_doc_name,
-                            document_type=_doc_type,
-                            notes=_notes_with_apt,
-                        )
+                        for idx, entry in enumerate(_doc_files, start=1):
+                            _b = entry.get("bytes")
+                            _n = entry.get("name")
+                            if not _b or not _n:
+                                continue
+                            # create distinct title per file when multiple
+                            if len(_doc_files) > 1:
+                                _title = f"{_doc_title_prefix} ({idx}/{len(_doc_files)})" if _doc_title_prefix else f"{_n}"
+                            else:
+                                _title = _doc_title_prefix or _n
+                            _notes_with_apt = f"{_doc_notes} [Attached to appointment #{result['appointment_id']} on {date_str}]".strip() if _doc_notes else f"Attached to appointment #{result['appointment_id']} on {date_str}"
+                            DocumentService.upload_document(
+                                patient_id=patient["id"],
+                                title=_title,
+                                file_bytes=_b,
+                                filename=_n,
+                                document_type=_doc_type,
+                                notes=_notes_with_apt,
+                            )
                     except Exception:
                         pass
-                    # clear upload state
-                    for k in ["booking_doc_bytes", "booking_doc_filename", "booking_doc_title", "booking_doc_type", "booking_doc_notes"]:
+                    # clear upload state (both new and legacy keys)
+                    for k in ["booking_doc_files", "booking_doc_bytes", "booking_doc_filename", "booking_doc_title", "booking_doc_type", "booking_doc_notes"]:
                         if k in st.session_state:
                             del st.session_state[k]
                     # clear forwarded chats state
+                    for k in ["booking_forward_chat_ids", "booking_forwarded_chats_json"]:
+                        if k in st.session_state:
+                            del st.session_state[k]
+                else:
+                    # still clear forwarded chats even if no docs
                     for k in ["booking_forward_chat_ids", "booking_forwarded_chats_json"]:
                         if k in st.session_state:
                             del st.session_state[k]
