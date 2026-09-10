@@ -37,6 +37,13 @@ if preferred:
     st.markdown(" ".join(f"<span class='mk-badge mk-badge-cyan'>{s}</span>" for s in preferred), unsafe_allow_html=True)
     st.markdown('<div style="height:0.5rem;"></div>', unsafe_allow_html=True)
 
+# Handle clear before widgets are instantiated (avoids StreamlitWidgetAlreadyInstantiatedError)
+if st.session_state.get("_clear_filters_pending"):
+    st.session_state.mk_spec_filter = "All"
+    st.session_state.mk_city_filter = "All"
+    st.session_state.preferred_specialties = []
+    st.session_state._clear_filters_pending = False
+
 c1, c2, c3 = st.columns(3)
 with c1:
     spec_filter = st.selectbox("Specialty", ["All"] + SPECIALTIES, key="mk_spec_filter")
@@ -44,14 +51,9 @@ with c2:
     city_filter = st.selectbox("City", ["All", "New York", "San Francisco", "Chicago", "Houston"], key="mk_city_filter")
 with c3:
     st.markdown('<div style="height:0.5rem;"></div>', unsafe_allow_html=True)
-    clear = st.button("Clear filters", icon=":material/filter_alt_off:")
-
-if clear:
-    st.session_state.preferred_specialties = []
-    st.session_state.mk_spec_filter = "All"
-    st.session_state.mk_city_filter = "All"
-    spec_filter = "All"
-    city_filter = "All"
+    if st.button("Clear filters", icon=":material/filter_alt_off:"):
+        st.session_state._clear_filters_pending = True
+        st.rerun()
 
 selected_doctor_id = st.session_state.get("selected_doctor_id")
 if selected_doctor_id:

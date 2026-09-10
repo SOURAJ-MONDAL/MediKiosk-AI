@@ -37,18 +37,28 @@ def test_specialty_suggestion():
 
 def test_fallback_response():
     ai = make_ai()
-    # OFFLINE: needs only 2 questions (symptom + severity) before summary
+    # OFFLINE: needs 3 (2 + 1 further-symptoms check) before summary
     result = ai.chat([{"role": "user", "content": "I have a headache"}])
     assert "response" in result
     assert "structured_summary" in result
     assert result["structured_summary"]["suggested_specialties"] == []
     assert result["structured_summary"]["suggested_medicines"] == []
     assert result["conversation_complete"] is False
-    # After 2 questions, offline allows summary and specialties (no medicines offline)
+    # After 2 questions, still needs the extra further-symptoms check, so not complete
+    history2 = [
+        {"role": "user", "content": "headache for 2 days"},
+        {"role": "assistant", "content": "When did it start?"},
+        {"role": "user", "content": "2 days, moderate"},
+    ]
+    result_mid = ai.chat(history2)
+    assert result_mid["conversation_complete"] is False
+    # After 3 (2+1), offline allows summary and specialties (no medicines offline)
     history = [
         {"role": "user", "content": "headache for 2 days"},
         {"role": "assistant", "content": "When did it start?"},
         {"role": "user", "content": "2 days, moderate"},
+        {"role": "assistant", "content": "Any further symptoms?"},
+        {"role": "user", "content": "no further symptoms"},
     ]
     result2 = ai.chat(history)
     assert result2["conversation_complete"] is True
